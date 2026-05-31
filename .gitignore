@@ -1,0 +1,14 @@
+# Python cache files
+**/__pycache__/
+*.pyc
+
+# Local environments
+backend/venv/
+backend/.env
+frontend/.env.local
+
+# Next.js build output & dependencies
+frontend/.next/
+frontend/node_modules/
+# Large ML datasets
+backend/data/

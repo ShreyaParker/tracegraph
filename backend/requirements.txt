@@ -10,8 +10,9 @@ pydantic==2.6.3
 # --- Missing Database Drivers ---
 neo4j==5.18.0
 
-# --- Missing ML & Analytics Stack (Aegis Brain) ---
-numpy==1.26.4
-pandas==2.2.1
-xgboost==2.0.3
-scikit-learn==1.4.1.post1
+# --- Updated ML & Analytics Stack (Python 3.13 Wheels Compatible) ---
+numpy>=1.26.4
+pandas>=2.2.3
+xgboost>=2.1.1
+scikit-learn>=1.5.2
+

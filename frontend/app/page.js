@@ -26,16 +26,51 @@ export default function Home() {
     if (!address.trim()) return;
     setLoading(true);
     setError(null);
+    
+    // Fallback to localhost if the Render URL env variable isn't loaded yet
+    const backendBaseUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+
     try {
+      // 1. Kickstart the FastAPI + Celery Blockchain Scraping Engine
+      console.log("Kicking off live Python blockchain worker...");
+      const triggerRes = await fetch(`${backendBaseUrl}/api/v1/trace`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          seed_address: address.trim(),
+          chain: chain, // passes "ethereum" or "bitcoin" dynamically
+          max_depth: 8
+        }),
+      });
+
+      if (!triggerRes.ok) {
+        throw new Error(`Failed to initialize Python crawler engine: ${triggerRes.statusText}`);
+      }
+
+      const triggerJson = await triggerRes.json();
+      console.log("Python Worker Status:", triggerJson.status);
+
+      // Give the background workers a brief moment (2.5 seconds) to map the first hop 
+      // before we fetch data from Neo4j so the screen doesn't show up empty.
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+
+      // 2. Fetch the newly written graph data from your Next.js Neo4j API handler
+      console.log("Pulling real-time records from Neo4j...");
       const res = await fetch(`/api/trace?address=${address.trim()}`);
       const json = await res.json();
+      
       if (json.error) throw new Error(json.error);
       setTraceData(json.data || []);
+      
     } catch (err) {
+      console.error("Pipeline Communication Error:", err);
       setError(err.message);
       setTraceData([]);
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   const safeData = Array.isArray(traceData) ? traceData : [];

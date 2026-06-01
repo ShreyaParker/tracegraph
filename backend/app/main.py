@@ -3,7 +3,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 
-# Using your actual function name here:
 from app.worker import trace_wallet_task 
 
 app = FastAPI(title="Project Aegis - TraceGraph Engine")
@@ -35,14 +34,14 @@ async def start_trace(request: TraceRequest, background_tasks: BackgroundTasks):
     else:
         raise HTTPException(status_code=400, detail="Unsupported chain.")
 
-    # Execute your actual worker function in the background
-    background_tasks.add_task(trace_wallet_task, address, chain, 0, request.max_depth)
+    # Pass background_tasks as the final argument so the worker can queue up sub-hops
+    background_tasks.add_task(trace_wallet_task, address, chain, 0, request.max_depth, background_tasks)
 
     return {
         "status": "Trace initiated",
         "seed_address": address,
         "chain": chain,
-        "message": "Internal worker thread is now crawling the blockchain."
+        "message": "Aegis background multi-threading engine tracking hops safely."
     }
 
 @app.get("/api/v1/health")

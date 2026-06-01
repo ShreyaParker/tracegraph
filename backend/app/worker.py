@@ -100,7 +100,7 @@ except Exception as e:
 # =========================================================
 # MAIN TRACE TASK
 # =========================================================
-@celery_app.task(name="trace_wallet")
+
 def trace_wallet_task(
     wallet_address: str,
     chain: str = "ethereum",

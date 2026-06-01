@@ -3,9 +3,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from typing import Optional
 
-# Import your actual crawling function directly instead of the task.delay
-# (Replace 'trace_wallet_logic' with whatever function executes your scraping inside worker.py)
-from app.worker import trace_wallet_logic 
+# Using your actual function name here:
+from app.worker import trace_wallet_task 
 
 app = FastAPI(title="Project Aegis - TraceGraph Engine")
 
@@ -36,8 +35,8 @@ async def start_trace(request: TraceRequest, background_tasks: BackgroundTasks):
     else:
         raise HTTPException(status_code=400, detail="Unsupported chain.")
 
-    # This kicks off the function safely in a separate thread inside FastAPI
-    background_tasks.add_task(trace_wallet_logic, address, chain, 0, request.max_depth)
+    # Execute your actual worker function in the background
+    background_tasks.add_task(trace_wallet_task, address, chain, 0, request.max_depth)
 
     return {
         "status": "Trace initiated",
@@ -48,4 +47,4 @@ async def start_trace(request: TraceRequest, background_tasks: BackgroundTasks):
 
 @app.get("/api/v1/health")
 async def health_check():
-    return {"status": "Tracegraph Engine Online"}
+    return {"status": "Aegis Engine Online"}

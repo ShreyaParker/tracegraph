@@ -4,14 +4,12 @@ import ssl
 import redis
 import numpy as np
 import xgboost as xgb
-
-from celery import Celery
 from dotenv import load_dotenv
 
 # 1. Load environment variables FIRST
 load_dotenv()
 
-# 2. Now import your application services safely
+# 2. Import application services
 from app.services.risk_scorer import (
     compute_risk_score,
     build_vasp_lookup
@@ -24,9 +22,6 @@ from app.services.alchemy import (
 from app.services.mempool import fetch_btc_greedy_path
 from app.services.neo4j_client import db
 from app.services.thorchain_resolver import resolve_thorchain_btc_output
-
-# ... rest of your code remains exactly the same
-load_dotenv()
 
 # =========================================================
 # THREAT INTELLIGENCE: ENTITY DATABASE
@@ -60,7 +55,7 @@ def resolve_entity(vasp_tag_from_api):
     return None
 
 # =========================================================
-# REDIS & CELERY SETUP
+# REDIS SETUP (Still used for loop prevention)
 # =========================================================
 redis_url = os.getenv("REDIS_URL", "")
 clean_redis_url = redis_url.split("?")[0]
@@ -68,21 +63,6 @@ clean_redis_url = redis_url.split("?")[0]
 redis_client = redis.Redis.from_url(
     clean_redis_url,
     ssl_cert_reqs=ssl.CERT_NONE
-)
-
-celery_app = Celery(
-    "aegis_worker",
-    broker=redis_url,
-    backend=redis_url
-)
-
-celery_app.conf.update(
-    broker_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
-    redis_backend_use_ssl={'ssl_cert_reqs': ssl.CERT_NONE},
-    broker_connection_retry_on_startup=True,
-    broker_pool_limit=None,
-    redis_backend_health_check_interval=30,
-    worker_prefetch_multiplier=1
 )
 
 THRESHOLD = float(os.getenv("VALUE_THRESHOLD", 0.1))
@@ -98,10 +78,10 @@ except Exception as e:
     print(f"⚠️ ML Model not found. Run train_ml.py first! Error: {e}")
 
 # =========================================================
-# MAIN TRACE TASK
+# MAIN TRACE TASK (Now 100% Async and Native)
 # =========================================================
 
-def trace_wallet_task(
+async def trace_wallet_task(
     wallet_address: str,
     chain: str = "ethereum",
     current_depth: int = 0,
@@ -120,13 +100,12 @@ def trace_wallet_task(
         return
 
     print(f"\n[{chain.upper()} TRACE] Layer {current_depth}: {wallet_address}")
-    loop = asyncio.get_event_loop()
 
     # =====================================================
     # BITCOIN TRACE LOGIC
     # =====================================================
     if chain.lower() == "bitcoin":
-        btc_data = loop.run_until_complete(fetch_btc_greedy_path(wallet_address))
+        btc_data = await fetch_btc_greedy_path(wallet_address)
         if not btc_data:
             return
 
@@ -198,13 +177,14 @@ def trace_wallet_task(
                 continue
 
             if peel_val >= 0.05:
-                trace_wallet_task.delay(peel_addr, "bitcoin", current_depth + 1, max_depth)
+                # Replaced .delay() with native asyncio create_task
+                asyncio.create_task(trace_wallet_task(peel_addr, "bitcoin", current_depth + 1, max_depth))
         return
 
     # =====================================================
     # ETHEREUM TRACE LOGIC
     # =====================================================
-    transfers = loop.run_until_complete(fetch_outbound_transfers(wallet_address))
+    transfers = await fetch_outbound_transfers(wallet_address)
     if not transfers:
         return
 
@@ -232,23 +212,20 @@ def trace_wallet_task(
         tx_hash = tx.get("hash", "unknown_hash")
         token_symbol = tx.get("asset") or tx.get("token") or tx.get("symbol") or "ETH"
 
-        # Cross Chain Detection Payload Scan (Standard Regex Fallback)
-        raw_input = loop.run_until_complete(fetch_transaction_input(tx_hash))
+        # Await directly instead of run_until_complete
+        raw_input = await fetch_transaction_input(tx_hash)
         cross_chain_data = scan_for_cross_chain_payload(raw_input)
         
         api_vasp_tag = build_vasp_lookup(recipient)
         
-        # Subpoena Target Entity Resolution
         entity_info = resolve_entity(api_vasp_tag)
         platform_name = entity_info["name"] if entity_info else api_vasp_tag
         le_notes = entity_info["note"] if entity_info else ""
 
-        # DYNAMIC THORCHAIN DETECTION
         is_thorchain = False
         if platform_name and "thorchain" in str(platform_name).lower():
             is_thorchain = True
 
-        # Enriched Risk Scoring for Ethereum Hops
         eth_risk = compute_risk_score({
             "address": recipient,
             "velocity_ratio": velocity_ratio,
@@ -289,7 +266,7 @@ def trace_wallet_task(
         # =====================================================
         if is_thorchain:
             print(f"🌉 [THORCHAIN] Dynamic router match via VASP tag — querying Midgard API...")
-            thor_result = loop.run_until_complete(resolve_thorchain_btc_output(tx_hash))
+            thor_result = await resolve_thorchain_btc_output(tx_hash)
 
             if thor_result:
                 dest_address = thor_result["btc_address"].lower()
@@ -317,7 +294,7 @@ def trace_wallet_task(
                         tx_hash=tx_hash, btc_amount=btc_amount
                     ).consume()
 
-                trace_wallet_task.delay(dest_address, "bitcoin", current_depth + 1, max_depth)
+                asyncio.create_task(trace_wallet_task(dest_address, "bitcoin", current_depth + 1, max_depth))
                 continue
             else:
                 print("⚠️ THORChain API did not return a BTC output for this tx.")
@@ -340,8 +317,8 @@ def trace_wallet_task(
                     dest_chain=dest_chain, tx_hash=tx_hash, asset=token_symbol
                 ).consume()
 
-            trace_wallet_task.delay(dest_address, dest_chain, current_depth + 1, max_depth)
+            asyncio.create_task(trace_wallet_task(dest_address, dest_chain, current_depth + 1, max_depth))
             continue
 
         # If no bridge is detected, continue standard trace on the same chain
-        trace_wallet_task.delay(recipient, "ethereum", current_depth + 1, max_depth)
+        asyncio.create_task(trace_wallet_task(recipient, "ethereum", current_depth + 1, max_depth))
